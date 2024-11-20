@@ -5,6 +5,8 @@ import sys
 import json
 import time
 
+
+#Simple Node Structure that stores all details of a particular Node
 class Node:
 
     # init
