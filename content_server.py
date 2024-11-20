@@ -78,6 +78,9 @@ class Node:
                 if current_time - timestamp < timeout
             ]
             time.sleep(1)  # Run cleanup every second
+    
+    def add_neighbors(self):
+        pass
 
     # Start as client
     def start_client(self):
