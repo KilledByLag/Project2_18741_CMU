@@ -32,7 +32,7 @@ class Node:
         for i in range(int(details['peer_count'])):
             self.neighbors[f"neighbor_{i}"] = details[f'peer_{i}']
 
-        self.running = True
+        self.event = thr.Event()
             
 
     # Show details of node
@@ -50,9 +50,13 @@ class Node:
     
     # Start as a server
     def start_server(self):
-        while self.running:
+        
+        while not self.event.is_set():
             try:
                 message, addr = self.socket.recvfrom(1024)
+
+                if not message:
+                    break
                 message = message.decode('utf-8')
                 print(message)
 
@@ -70,22 +74,27 @@ class Node:
                 # print(message)
             except ConnectionResetError as e:
                 pass
+            self.event.wait(1)
+
 
     def cleanup_neighbors(self, timeout=10):
-        while self.running:
+        while not self.event.is_set():
             current_time = time.time()
             self.active_neighbors = [
                 (ip, port, timestamp) for (ip, port, timestamp) in self.active_neighbors 
                 if current_time - timestamp < timeout
             ]
             time.sleep(1)  # Run cleanup every second
+            self.event.wait(1)
+
     
     def add_neighbors(self):
         pass
 
     # Start as client
     def start_client(self):
-        while self.running:
+        while not self.event.is_set():
+            
             try:
                 message = json.dumps(self.get_message()).encode('utf-8')
                 
@@ -97,12 +106,14 @@ class Node:
                 time.sleep(2)  # Send message every 5 seconds
             except Exception as e:
                 pass
+            self.event.wait(1)
     
     def commands(self):
-            while self.running:
+        while not self.event.is_set():
+            try:
                 user_input = input("Enter command (type 'exit' to quit): ")
                 if user_input == "exit":
-                    self.running = False
+                    self.event.set()
                     break
                 elif user_input == "uuid":
                     print(self.uuid)
@@ -110,6 +121,11 @@ class Node:
                     print(self.active_neighbors)
                 else:
                     print("Unknown command. Please try again.")
+            except EOFError:
+                self.event.set()
+                break
+            self.event.wait(1)
+
 
 def main():
     if len(sys.argv) == 3 and sys.argv[1] == '-c':
@@ -125,12 +141,13 @@ def main():
         cleanup_thread.start()
         command_thread.start()
 
+        # Wait for the command thread to finish
+        command_thread.join()
+        print("Exiting program.")
         server_thread.join()
         client_thread.join()
         cleanup_thread.join()
-        command_thread.join()
-
-
+        
 
 if __name__ == "__main__":
     main()
