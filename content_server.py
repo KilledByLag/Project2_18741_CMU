@@ -50,8 +50,8 @@ class Node:
         self.lock =  thr.Lock()
         self.NODE_DEATH_TIMEOUT = 5 #Death Declaration threshold
         self.CLEANUP_PERIODICITY = 0.5 #Cleanup thread check periddicity
-        self.SERVER_WAIT_TIME = 1 #Server Socket Recieve timeout - Raises exception which is ignored, and tries again
-        self.CLIENT_MESSAGE_PERIODICITY = 0.1 #Client message periodicity
+        self.SERVER_WAIT_TIME = 2 #Server Socket Recieve timeout - Raises exception which is ignored, and tries again
+        self.CLIENT_MESSAGE_PERIODICITY = 1 #Client message periodicity
             
 
     # Show details of node
@@ -59,14 +59,15 @@ class Node:
         print(getattr(self, param))
 
     def get_message(self, metric):
-        message = {
-            "name": self.name,
-            "uuid": self.uuid,
-            "host": self.host,
-            "port": self.port,
-            "mydistancetoyou": metric
-            # "neighbors": self.neighbors,
-        }
+        with self.lock:
+            message = {
+                "name": self.name,
+                "uuid": self.uuid,
+                "host": self.host,
+                "port": self.port,
+                "mydistancetoyou": metric,
+                "neighbors": self.active_neighbors
+            }
         return message
     
     def update_details(self, message_details):
@@ -100,9 +101,35 @@ class Node:
                                                                          "backend_port": message["port"],
                                                                          "metric": message["mydistancetoyou"]}
 
-        def update_map():
-            pass
-        
+        def update_map(message, addr):
+
+            with self.lock:
+                my_neighbors = {}
+                for neighbor in self.active_neighbors:
+                    neighbor, metric = neighbor, self.active_neighbors[neighbor]['metric']
+                    my_neighbors[neighbor] = metric
+                
+                neighbors_neighbors = {}
+                for neighbor in message["neighbors"]:
+                    neighbor, metric = neighbor, message["neighbors"][neighbor]["metric"]
+                    neighbors_neighbors[neighbor] = metric
+                
+                
+                self.map[message['name']] = neighbors_neighbors
+
+                #Adding map cleanup here to make it simpler
+
+                map_removal_list = []
+                for node in self.map:
+                    if node not in self.active_neighbors:
+                        map_removal_list.append(node)
+                for node in map_removal_list:
+                    del self.map[node]
+
+                #Adding own neighbors to map after cleanup because this has to exist
+
+                self.map[self.name] = my_neighbors
+  
         def update_rank():
             pass
 
@@ -115,12 +142,15 @@ class Node:
         """
         message, addr = message_details
         message = json.loads(message.decode('utf-8'))
-        # print(addr)
+        # print(message)
+
         #Condition to check if it is direct message or forwarded message (Only update active neighbors, if direct message)
         if addr == ((message["host"] if message["host"] == "127.0.0.1" else "127.0.0.1", message["port"])):
             #Update Active Neighbors
             update_active_neighbors(message, addr)
             update_neighbor_list(message, addr)
+
+        update_map(message, addr)
             
             
 
@@ -173,7 +203,7 @@ class Node:
 
                     self.socket.sendto(message, (host, int(port)))
                 
-                self.event.wait(0.1)
+                self.event.wait(self.CLIENT_MESSAGE_PERIODICITY)
             except Exception as e:
                 pass
             
@@ -184,6 +214,10 @@ class Node:
         
         if command == "uuid":
             return {"uuid":self.uuid}
+
+        if command == "map":
+            with self.lock:
+                return {"map": self.map}
             
 
     def commands(self):
