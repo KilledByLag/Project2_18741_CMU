@@ -26,11 +26,14 @@ class Node:
         self.port = int(details['backend_port'])
         self.host = "localhost"
 
+        # Structures for storing neighbor details
         self.neighbors = {}  
         self.active_neighbors = {}
+        self.active_neighbors_last_seen = {}
         self.map = {}
         self.rank = {}
 
+        # Bind socket
         self.socket = st.socket(st.AF_INET, st.SOCK_DGRAM)
         self.socket.bind((self.host, self.port))
 
@@ -41,6 +44,8 @@ class Node:
                                                "backend_port": int(details[f'peer_{i}'].split(",")[2].strip()),
                                                "metric": int(details[f'peer_{i}'].split(",")[3].strip())}
 
+
+        #Some Miscellaneous objects
         self.event = thr.Event()
         self.lock =  thr.Lock()
         self.NODE_DEATH_TIMEOUT = 5 #Death Declaration threshold
@@ -71,15 +76,15 @@ class Node:
                 # neighbor_node_neighbors = message["neighbors"]
 
                 if neighbor_node_name in self.active_neighbors:
-                    self.active_neighbors[neighbor_node_name]["time"] = time.time()  
-
+                    self.active_neighbors_last_seen[neighbor_node_name] = time.time()
+                
                 else:
                     self.active_neighbors[neighbor_node_name] = {"uuid": neighbor_node_uuid,
                                                 "host": addr[0],
                                                 "backend_port": addr[1],
-                                                "metric": metric_to_me,
-                                                "time": time.time()
+                                                "metric": metric_to_me
                                                 }
+                    self.active_neighbors_last_seen[neighbor_node_name] = time.time()
                     
 
         def update_map():
@@ -157,8 +162,7 @@ class Node:
     def extract_details(self, command):
         if command == "neighbors":
             with self.lock:
-                neighbors = {neighbor: {key: value for key, value in details.items() if key != "time"} for neighbor, details in self.active_neighbors.items()}
-                return {"neighbors": neighbors}
+                return {"neighbors": self.active_neighbors}
         
         if command == "uuid":
             return {"uuid":self.uuid}
@@ -185,12 +189,13 @@ class Node:
         while not self.event.wait(timeout=self.CLEANUP_PERIODICITY):
             removal_list = []
             with self.lock:
-                for neighbor in self.active_neighbors:
-                    neighbor_last_active = self.active_neighbors[neighbor]['time']
+                for neighbor in self.active_neighbors_last_seen:
+                    neighbor_last_active = self.active_neighbors_last_seen[neighbor]
                     if time.time() - neighbor_last_active > self.NODE_DEATH_TIMEOUT:
                         removal_list.append(neighbor)
                 for neighbor in removal_list:
                     del self.active_neighbors[neighbor]
+                    del self.active_neighbors_last_seen[neighbor]
 
 
 
