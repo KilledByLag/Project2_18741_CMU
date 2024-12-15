@@ -111,8 +111,7 @@ class Node:
                 else:
                     print("Unknown command. Please try again.")
 
-
-if __name__ == "__main__":
+def main():
     if len(sys.argv) == 3 and sys.argv[1] == '-c':
         node = Node(sys.argv[2])
 
@@ -130,3 +129,8 @@ if __name__ == "__main__":
         client_thread.join()
         cleanup_thread.join()
         command_thread.join()
+
+
+
+if __name__ == "__main__":
+    main()
