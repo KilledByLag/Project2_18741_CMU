@@ -62,7 +62,8 @@ class Node:
         message = {
             "name": self.name,
             "uuid": self.uuid,
-            # "port": self.port,
+            "host": self.host,
+            "port": self.port,
             "mydistancetoyou": metric
             # "neighbors": self.neighbors,
         }
@@ -77,7 +78,7 @@ class Node:
 
                 if neighbor_node_name in self.active_neighbors:
                     self.active_neighbors_last_seen[neighbor_node_name] = time.time()
-                
+
                 else:
                     self.active_neighbors[neighbor_node_name] = {"uuid": neighbor_node_uuid,
                                                 "host": addr[0],
@@ -86,6 +87,18 @@ class Node:
                                                 }
                     self.active_neighbors_last_seen[neighbor_node_name] = time.time()
                     
+        def update_neighbor_list(message, addr):
+            found = False
+            with self.lock:
+                for neighbor in self.neighbors:
+                    if message["uuid"] == self.neighbors[neighbor]["uuid"]:
+                        found = True
+                        break
+                if not found:
+                    self.neighbors[f"neighbor_{len(self.neighbors)}"] = {"uuid": message["uuid"],
+                                                                         "host": message["host"],
+                                                                         "backend_port": message["port"],
+                                                                         "metric": message["mydistancetoyou"]}
 
         def update_map():
             pass
@@ -96,16 +109,20 @@ class Node:
 
 
         """
-        Input Args : Message, Message "from" address
+        Input Args : Message, "from" address
         Function : Updates Active Neigbors, Rank, and Map of the node
 
         """
         message, addr = message_details
         message = json.loads(message.decode('utf-8'))
-
-        #Update Active Neighbors
-        update_active_neighbors(message, addr)
-        
+        # print(addr)
+        #Condition to check if it is direct message or forwarded message (Only update active neighbors, if direct message)
+        if addr == ((message["host"] if message["host"] == "127.0.0.1" else "127.0.0.1", message["port"])):
+            #Update Active Neighbors
+            update_active_neighbors(message, addr)
+            update_neighbor_list(message, addr)
+            
+            
 
 
     # Start as a server
@@ -135,11 +152,12 @@ class Node:
                 'backend_port': int(match.group(3)),
                 'metric': int(match.group(4))
             }
+            with self.lock:
+                self.neighbors[f"neighbor_{len(self.neighbors)}"] = new_node
+            print("Added neighbor Success")
         else:
             print("Addneighbor command format wrong!")
 
-            with self.lock:
-                self.neighbors[f"neighbor_{len(self.neighbors)}"] = new_node
 
     # Start as client
     def start_client(self):
