@@ -13,7 +13,7 @@ class Node:
     def __init__(self, filename):
         # Get details from the conf file
         details = {}
-        with open(filename) as f:
+        with open(fr"{filename}") as f:
             for line in f:
                 key, val = line.split("=")
                 details[key.strip()] = val.strip()
@@ -54,6 +54,7 @@ class Node:
             try:
                 message, addr = self.socket.recvfrom(1024)
                 message = message.decode('utf-8')
+                print(message)
 
                 # If new neighbor, add it with a timestamp
                 found = False
@@ -86,34 +87,30 @@ class Node:
     def start_client(self):
         while self.running:
             try:
-                # Create a dictionary message and convert it to a JSON string
                 message = json.dumps(self.get_message()).encode('utf-8')
                 
-                # Send message to all neighbors stored in self.neighbors
                 for neighbor in self.neighbors.values():
-                    # Split the neighbor string by commas to extract details
                     peer_uuid, host, port, _ = neighbor.split(", ")
                     
-                    # Send the message to the neighbor's host and port
                     self.socket.sendto(message, (host, int(port)))
                 
-                # print(f"Sent message to {len(self.neighbors)} neighbors")
-                time.sleep(5)  # Send message every 5 seconds
+                time.sleep(2)  # Send message every 5 seconds
             except Exception as e:
                 pass
     
     def commands(self):
-        while True:
-            user_input = input("Enter command (type 'exit' to quit): ")
-            if user_input == "exit":
-                self.running = False
-                break
-            elif user_input == "uuid":
-                print(self.uuid)
-            elif user_input == "active_neighbors":
-                print(self.active_neighbors)
-            else:
-                print("Unknown command. Please try again.")
+            while self.running:
+                user_input = input("Enter command (type 'exit' to quit): ")
+                if user_input == "exit":
+                    self.running = False
+                    break
+                elif user_input == "uuid":
+                    print(self.uuid)
+                elif user_input == "active_neighbors":
+                    print(self.active_neighbors)
+                else:
+                    print("Unknown command. Please try again.")
+
 
 if __name__ == "__main__":
     if len(sys.argv) == 3 and sys.argv[1] == '-c':
