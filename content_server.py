@@ -5,6 +5,7 @@ import sys
 import json
 import time
 import re
+import queue
 
 
 #Simple Node Structure that stores all details of a particular Node
@@ -24,12 +25,13 @@ class Node:
         self.uuid = details['uuid']
         self.name = details['name']
         self.port = int(details['backend_port'])
-        self.host = "localhost"
+        self.host = "127.0.0.1"
 
         # Structures for storing neighbor details
         self.neighbors = {}  
         self.active_neighbors = {}
-        self.active_neighbors_last_seen = {}
+        self.neighbors_last_seen = {}
+        self.neighbors_seqnums = {}
         self.map = {}
         self.rank = {}
 
@@ -50,7 +52,7 @@ class Node:
         self.lock =  thr.Lock()
         self.NODE_DEATH_TIMEOUT = 5 #Death Declaration threshold
         self.CLEANUP_PERIODICITY = 0.5 #Cleanup thread check periddicity
-        self.SERVER_WAIT_TIME = 2 #Server Socket Recieve timeout - Raises exception which is ignored, and tries again
+        self.SERVER_WAIT_TIME = 0.1 #Server Socket Recieve timeout - Raises exception which is ignored, and tries again
         self.CLIENT_MESSAGE_PERIODICITY = 1 #Client message periodicity
             
 
@@ -58,7 +60,7 @@ class Node:
     def show_details(self, param):
         print(getattr(self, param))
 
-    def get_message(self, metric):
+    def get_message(self, metric, seqnum):
         with self.lock:
             message = {
                 "name": self.name,
@@ -66,27 +68,30 @@ class Node:
                 "host": self.host,
                 "port": self.port,
                 "mydistancetoyou": metric,
-                "neighbors": self.active_neighbors
+                "neighbors": self.active_neighbors,
+                "seqnum" : seqnum
             }
         return message
     
-    def update_details(self, message_details):
+    def update_details(self, message, addr):
 
         def update_active_neighbors(message, addr):
             with self.lock:
-                neighbor_node_name, neighbor_node_uuid, metric_to_me = message["name"], message["uuid"], message["mydistancetoyou"]
+                neighbor_node_name, neighbor_node_uuid, neighbor_node_host, neighbor_node_port, metric_to_me = message["name"], message["uuid"],message["host"], message["port"], message["mydistancetoyou"]
                 # neighbor_node_neighbors = message["neighbors"]
 
+                #Updating last seen time (Improve by simply calling the update_timestamps function later)
+
                 if neighbor_node_name in self.active_neighbors:
-                    self.active_neighbors_last_seen[neighbor_node_name] = time.time()
+                    self.neighbors_last_seen[neighbor_node_name] = time.time()
 
                 else:
                     self.active_neighbors[neighbor_node_name] = {"uuid": neighbor_node_uuid,
-                                                "host": addr[0],
-                                                "backend_port": addr[1],
+                                                "host": neighbor_node_host,
+                                                "backend_port": neighbor_node_port,
                                                 "metric": metric_to_me
                                                 }
-                    self.active_neighbors_last_seen[neighbor_node_name] = time.time()
+                    self.neighbors_last_seen[neighbor_node_name] = time.time()
                     
         def update_neighbor_list(message, addr):
             found = False
@@ -101,6 +106,16 @@ class Node:
                                                                          "backend_port": message["port"],
                                                                          "metric": message["mydistancetoyou"]}
 
+        def update_timestamps(message, addr):
+            with self.lock:
+                neighbor_node_name = message["name"]
+                current_time = time.time()
+                
+                # Only update the timestamp if the current time is later
+                if neighbor_node_name not in self.neighbors_last_seen or self.neighbors_last_seen[neighbor_node_name] < current_time:
+                    self.neighbors_last_seen[neighbor_node_name] = current_time
+
+
         def update_map(message, addr):
 
             with self.lock:
@@ -114,19 +129,7 @@ class Node:
                     neighbor, metric = neighbor, message["neighbors"][neighbor]["metric"]
                     neighbors_neighbors[neighbor] = metric
                 
-                
                 self.map[message['name']] = neighbors_neighbors
-
-                #Adding map cleanup here to make it simpler
-
-                map_removal_list = []
-                for node in self.map:
-                    if node not in self.active_neighbors:
-                        map_removal_list.append(node)
-                for node in map_removal_list:
-                    del self.map[node]
-
-                #Adding own neighbors to map after cleanup because this has to exist
 
                 self.map[self.name] = my_neighbors
   
@@ -140,29 +143,52 @@ class Node:
         Function : Updates Active Neigbors, Rank, and Map of the node
 
         """
-        message, addr = message_details
-        message = json.loads(message.decode('utf-8'))
         # print(message)
 
         #Condition to check if it is direct message or forwarded message (Only update active neighbors, if direct message)
-        if addr == ((message["host"] if message["host"] == "127.0.0.1" else "127.0.0.1", message["port"])):
+        if addr == ((message["host"], message["port"])):
             #Update Active Neighbors
             update_active_neighbors(message, addr)
             update_neighbor_list(message, addr)
+        else:
+            # print("Updating timestep for indirect neighbor/forwarded message")
+            # print("Forwarded message is:", message)
+            update_timestamps(message, addr)
 
         update_map(message, addr)
             
             
-
-
     # Start as a server
     def start_server(self):
         while not self.event.is_set():
             try:
+                #This is the receiver part
                 self.socket.settimeout(self.SERVER_WAIT_TIME)  # Ensure it doesn't block forever
                 message, addr = self.socket.recvfrom(1024)
+                
                 if message:
-                    self.update_details((message, addr))
+                    message = json.loads(message.decode('utf-8'))
+                    # print(message)
+                    if message['name'] not in self.neighbors_seqnums:
+                        self.neighbors_seqnums[message['name']] = message['seqnum']
+
+                    if self.neighbors_seqnums[message['name']] <= message['seqnum']:
+                        self.update_details(message, addr)
+                        #This part forwards message to all neighbors, except the one it received from
+                        try:
+                            for neighbor in self.neighbors:
+                                host, port = self.neighbors[neighbor]["host"], self.neighbors[neighbor]["backend_port"]
+
+                                if host == "localhost": # Need to handle many of these in the program - ideally declare somewhere that "localhost" == "127.0.0.1" == "0.0.0.0"
+                                    host = "127.0.0.1"
+
+                                if ((host, port)) != addr:
+                                    # print(f"forwarding message {message} from {addr[1]} to {port}")
+                                    self.socket.sendto(json.dumps(message).encode('utf-8'), (host, int(port)))
+
+                        except Exception as e:
+                            pass
+
             except st.timeout:
                 continue  # Timeout ensures the loop remains responsive
             except ConnectionResetError:
@@ -191,6 +217,8 @@ class Node:
 
     # Start as client
     def start_client(self):
+        count = 0
+
         while not self.event.is_set():
             
             try:
@@ -199,13 +227,15 @@ class Node:
                     
                     host, port, metric_to_neighbor = self.neighbors[neighbor]["host"], self.neighbors[neighbor]["backend_port"], self.neighbors[neighbor]["metric"]
                     
-                    message = json.dumps(self.get_message(metric_to_neighbor)).encode('utf-8')
+                    message = json.dumps(self.get_message(metric_to_neighbor, count)).encode('utf-8')
 
                     self.socket.sendto(message, (host, int(port)))
                 
                 self.event.wait(self.CLIENT_MESSAGE_PERIODICITY)
+
             except Exception as e:
                 pass
+            count += 1
             
     def extract_details(self, command):
         if command == "neighbors":
@@ -223,7 +253,7 @@ class Node:
     def commands(self):
         while not self.event.is_set():
             try:
-                user_input = input("Enter command (type 'kill' to quit): ")
+                user_input = input()
                 if user_input == "kill":
                     self.event.set()
                     break
@@ -239,17 +269,25 @@ class Node:
 
     def cleanup_details(self):
         while not self.event.wait(timeout=self.CLEANUP_PERIODICITY):
-            removal_list = []
+            current_time = time.time()
+
             with self.lock:
-                for neighbor in self.active_neighbors_last_seen:
-                    neighbor_last_active = self.active_neighbors_last_seen[neighbor]
-                    if time.time() - neighbor_last_active > self.NODE_DEATH_TIMEOUT:
-                        removal_list.append(neighbor)
+                removal_list = [
+                    neighbor for neighbor, last_active in self.neighbors_last_seen.items()
+                    if current_time - last_active > self.NODE_DEATH_TIMEOUT
+                ]
+
                 for neighbor in removal_list:
-                    del self.active_neighbors[neighbor]
-                    del self.active_neighbors_last_seen[neighbor]
+                    self.neighbors_last_seen.pop(neighbor, None) #Clean Last seen time
+                    self.active_neighbors.pop(neighbor, None) #Clean active neighbors
+                    self.map.pop(neighbor, None) #Clean Map
 
-
+                    #Clean own neighbors in map, if they are inactive
+                    if self.name in self.map: 
+                        self.map[self.name].pop(neighbor, None)
+                #Clean self, if 0 neighbors active
+                if self.name in self.map and not self.map[self.name]:
+                    self.map.pop(self.name, None)
 
 def main():
     if len(sys.argv) == 3 and sys.argv[1] == '-c':
