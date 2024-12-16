@@ -165,14 +165,16 @@ class Node:
                 #This is the receiver part
                 self.socket.settimeout(self.SERVER_WAIT_TIME)  # Ensure it doesn't block forever
                 message, addr = self.socket.recvfrom(1024)
-                
+
                 if message:
                     message = json.loads(message.decode('utf-8'))
-                    # print(message)
+
                     if message['name'] not in self.neighbors_seqnums:
                         self.neighbors_seqnums[message['name']] = message['seqnum']
 
-                    if self.neighbors_seqnums[message['name']] <= message['seqnum']:
+                    
+                    if message['seqnum'] > self.neighbors_seqnums[message['name']]:
+                        self.neighbors_seqnums[message['name']] = message['seqnum']
                         self.update_details(message, addr)
                         #This part forwards message to all neighbors, except the one it received from
                         try:
@@ -183,7 +185,6 @@ class Node:
                                     host = "127.0.0.1"
 
                                 if ((host, port)) != addr:
-                                    # print(f"forwarding message {message} from {addr[1]} to {port}")
                                     self.socket.sendto(json.dumps(message).encode('utf-8'), (host, int(port)))
 
                         except Exception as e:
