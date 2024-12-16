@@ -5,7 +5,8 @@ import sys
 import json
 import time
 import re
-import queue
+from queue import Queue
+import numpy as np
 
 
 #Simple Node Structure that stores all details of a particular Node
@@ -51,7 +52,7 @@ class Node:
         self.event = thr.Event()
         self.lock =  thr.Lock()
         self.NODE_DEATH_TIMEOUT = 5 #Death Declaration threshold
-        self.CLEANUP_PERIODICITY = 0.5 #Cleanup thread check periddicity
+        self.CLEANUP_PERIODICITY = 1 #Cleanup thread check periddicity
         self.SERVER_WAIT_TIME = 0.1 #Server Socket Recieve timeout - Raises exception which is ignored, and tries again
         self.CLIENT_MESSAGE_PERIODICITY = 1 #Client message periodicity
             
@@ -132,12 +133,32 @@ class Node:
                 self.map[message['name']] = neighbors_neighbors
 
                 self.map[self.name] = my_neighbors
+
   
         def update_rank():
-            pass
+            start_node = self.name
 
+            # Dijkstra's is written for shortest paths
+            with self.lock:
 
+                dist = {node: np.inf if node != start_node else 0 for node in self.map}
+                prev = {node: None for node in self.map}
+                node_set = [node for node in self.map]
 
+                while node_set:
+                    u = min((node for node in node_set), key=dist.get)
+                    node_set.pop(node_set.index(u))
+
+                    for neighbor in self.map.get(u, {}): 
+                        if neighbor in node_set:
+                            edge_value = self.map[u][neighbor]
+                            alt = dist[u] + edge_value
+                            if alt < dist[neighbor]:
+                                dist[neighbor] = alt
+                                prev[neighbor] = u
+
+                self.rank = {node: value for node, value in dist.items() if node!= self.name}
+                self.rank = {k: v for k, v in sorted(self.rank.items(), key=lambda item: item[1])}
         """
         Input Args : Message, "from" address
         Function : Updates Active Neigbors, Rank, and Map of the node
@@ -156,6 +177,7 @@ class Node:
             update_timestamps(message, addr)
 
         update_map(message, addr)
+        update_rank()
             
             
     # Start as a server
@@ -250,6 +272,10 @@ class Node:
             with self.lock:
                 return {"map": self.map}
             
+        if command == "rank":
+            with self.lock:
+                return {"rank":self.rank}
+            
 
     def commands(self):
         while not self.event.is_set():
@@ -282,6 +308,7 @@ class Node:
                     self.neighbors_last_seen.pop(neighbor, None) #Clean Last seen time
                     self.active_neighbors.pop(neighbor, None) #Clean active neighbors
                     self.map.pop(neighbor, None) #Clean Map
+                    self.rank.pop(neighbor, None) #Clean Rank
 
                     #Clean own neighbors in map, if they are inactive
                     if self.name in self.map: 
