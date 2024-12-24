@@ -87,10 +87,10 @@ class Node:
         #Some Miscellaneous objects
         self.event = thr.Event()
         self.lock =  thr.Lock()
-        self.NODE_DEATH_TIMEOUT = 5 #Death Declaration threshold
-        self.CLEANUP_PERIODICITY = 1 #Cleanup thread check periddicity
+        self.NODE_DEATH_TIMEOUT = 4 #Death Declaration threshold
+        self.CLEANUP_PERIODICITY = 0.75 #Cleanup thread check periddicity
         self.SERVER_WAIT_TIME = 0.1 #Server Socket Recieve timeout - Raises exception which is ignored, and tries again
-        self.CLIENT_MESSAGE_PERIODICITY = 1 #Client message periodicity
+        self.CLIENT_MESSAGE_PERIODICITY = 0.8 #Client message periodicity
             
 
 
